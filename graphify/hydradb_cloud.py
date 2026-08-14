@@ -400,6 +400,78 @@ class HydraDBCloudClient:
         return self._request("POST", "/feedback", json_body=body)
 
 
+# -- SDK-backed LLM context ---------------------------------------------------
+
+def build_llm_context(
+    database: str,
+    query: str,
+    *,
+    type: str = "knowledge",
+    query_by: str = "hybrid",
+    mode: str | None = None,
+    max_results: int | None = None,
+    collection: str | None = None,
+    graph_context: bool = True,
+    api_key: str | None = None,
+) -> tuple[str, str | None]:
+    """Query HydraDB and format the result with HydraDB's own build_string().
+
+    HydraDBCloudClient.query() + format_query_result() stay stdlib-only, for
+    the CLI's human-readable display. build_string() (from the official
+    hydradb-sdk package) is different: it is HydraDB's documented way to
+    turn a query result into a compact string for an LLM prompt, and the
+    platform's own docs warn against reimplementing it - but it only accepts
+    the SDK's typed response object, not the plain dict this module's client
+    returns, so producing it correctly means making the call through the SDK
+    client instead of the stdlib one.
+
+    Returns ``(context, request_id)``. The SDK client has no feedback
+    resource, so ``request_id`` is for a follow-up call to this module's
+    ``HydraDBCloudClient.feedback()``.
+
+    Requires the `hydradb-sdk` extra (``pip install hydradb-sdk``).
+    """
+    try:
+        from hydra_db import HydraDB
+        from hydra_db.core.api_error import ApiError
+        from hydra_db.helpers import build_string
+    except ImportError as e:
+        raise HydraDBCloudError(
+            "hydradb-sdk not installed (needed to build the LLM-context "
+            "string with HydraDB's own formatter). Run: pip install "
+            "hydradb-sdk"
+        ) from e
+
+    key = api_key or os.environ.get(API_KEY_ENV)
+    if not key:
+        raise HydraDBCloudError(f"no API key: pass api_key or set {API_KEY_ENV}")
+
+    kwargs: dict = {
+        "database": database, "query": query, "type": type,
+        "query_by": query_by, "graph_context": graph_context,
+    }
+    if mode:
+        kwargs["mode"] = mode
+    if max_results is not None:
+        kwargs["max_results"] = max_results
+    if collection:
+        kwargs["collection"] = collection
+
+    try:
+        envelope = HydraDB(token=key).query(**kwargs)
+    except ApiError as e:
+        # ApiError.__str__ dumps raw headers/status_code/body rather than a
+        # message, so pull the same {error: {code, message}} shape our own
+        # envelope parsing (_envelope_error) reads out of e.body directly.
+        err = (e.body or {}).get("error") if isinstance(e.body, dict) else None
+        message = (err or {}).get("message") or f"HTTP {e.status_code}"
+        code = (err or {}).get("code")
+        raise HydraDBCloudError(message, status=e.status_code, code=code) from e
+
+    request_id = envelope.meta.request_id if envelope.meta else None
+    return build_string(envelope), request_id
+
+
 # -- graphify-specific sync ---------------------------------------------------
 
 def default_database_name(project_dir: str | Path) -> str:
