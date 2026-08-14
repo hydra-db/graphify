@@ -2737,6 +2737,7 @@ def dispatch_command(cmd: str) -> None:
             API_KEY_ENV,
             HydraDBCloudClient,
             HydraDBCloudError,
+            build_llm_context,
             default_database_name,
             format_query_result,
             sync_out_dir,
@@ -2749,6 +2750,7 @@ def dispatch_command(cmd: str) -> None:
             print("            push graphify-out artifacts (report + wiki) as knowledge", file=sys.stderr)
             print("  query     \"question\" [--database NAME] [--type knowledge|memory|all]", file=sys.stderr)
             print("            [--mode fast|thinking] [--max-results N] [--collection C] [--verbose]", file=sys.stderr)
+            print("            [--llm-context]  format with HydraDB's build_string() (needs hydradb-sdk)", file=sys.stderr)
             print("  status    [--database NAME]      infrastructure + indexing status", file=sys.stderr)
             print("  databases                        list databases on the account", file=sys.stderr)
             print("  feedback  --request-id ID --text \"...\" [--database NAME]", file=sys.stderr)
@@ -2765,6 +2767,7 @@ def dispatch_command(cmd: str) -> None:
         hydra_mode: str | None = None
         hydra_max: int | None = None
         hydra_verbose = False
+        hydra_llm_context = False
         hydra_text: str | None = None
         hydra_request_id: str | None = None
         positional: list[str] = []
@@ -2785,6 +2788,8 @@ def dispatch_command(cmd: str) -> None:
                 hydra_max = int(args[i + 1]); i += 2
             elif a == "--verbose":
                 hydra_verbose = True; i += 1
+            elif a == "--llm-context":
+                hydra_llm_context = True; i += 1
             elif a == "--text" and i + 1 < len(args):
                 hydra_text = args[i + 1]; i += 2
             elif a == "--request-id" and i + 1 < len(args):
@@ -2828,12 +2833,22 @@ def dispatch_command(cmd: str) -> None:
                           file=sys.stderr)
                     sys.exit(1)
                 database = database or default_database_name(Path.cwd())
-                data = client.query(
-                    database, positional[0], type=hydra_type,
-                    mode=hydra_mode, max_results=hydra_max,
-                    collection=collection,
-                )
-                print(format_query_result(data, verbose=hydra_verbose))
+                if hydra_llm_context:
+                    context, request_id = build_llm_context(
+                        database, positional[0], type=hydra_type,
+                        mode=hydra_mode, max_results=hydra_max,
+                        collection=collection,
+                    )
+                    print(context)
+                    if request_id:
+                        print(f"\nrequest id: {request_id} (for feedback)")
+                else:
+                    data = client.query(
+                        database, positional[0], type=hydra_type,
+                        mode=hydra_mode, max_results=hydra_max,
+                        collection=collection,
+                    )
+                    print(format_query_result(data, verbose=hydra_verbose))
 
             elif subcmd == "status":
                 database = database or default_database_name(Path.cwd())
