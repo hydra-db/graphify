@@ -253,6 +253,7 @@ Codex users also need `multi_agent = true` under `[features]` in `~/.codex/confi
 | `mcp` | MCP stdio server | `uv tool install "graphifyy[mcp]"` |
 | `neo4j` | Neo4j push support | `uv tool install "graphifyy[neo4j]"` |
 | `falkordb` | FalkorDB push support | `uv tool install "graphifyy[falkordb]"` |
+| `hydradb` | HydraDB push support (Bolt via the neo4j driver) | `uv tool install "graphifyy[hydradb]"` |
 | `svg` | SVG graph export | `uv tool install "graphifyy[svg]"` |
 | `leiden` | Leiden community detection (Python < 3.13 only) | `uv tool install "graphifyy[leiden]"` |
 | `ollama` | Ollama local inference | `uv tool install "graphifyy[ollama]"` |
@@ -651,6 +652,7 @@ graphify extract ./raw --code-only # index code only — local AST, no API key (
 /graphify ./raw --neo4j-push bolt://localhost:7687
 /graphify ./raw --falkordb         # generate cypher.txt for FalkorDB
 /graphify ./raw --falkordb-push falkordb://localhost:6379
+/graphify ./raw --hydradb-push bolt://localhost:7687   # HydraDB (auth token via HYDRADB_TOKEN)
 /graphify ./raw --watch            # auto-sync as files change
 /graphify ./raw --mcp              # start MCP stdio server
 

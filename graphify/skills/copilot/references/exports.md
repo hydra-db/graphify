@@ -1,6 +1,6 @@
 # graphify reference: extra exports and benchmark
 
-Load this when the user passed one of the export flags (`--wiki`, `--neo4j`, `--neo4j-push`, `--falkordb`, `--falkordb-push`, `--svg`, `--graphml`, `--mcp`), or when the corpus is large enough for the token-reduction benchmark. Each step runs only for its own flag.
+Load this when the user passed one of the export flags (`--wiki`, `--neo4j`, `--neo4j-push`, `--falkordb`, `--falkordb-push`, `--hydradb-push`, `--svg`, `--graphml`, `--mcp`), or when the corpus is large enough for the token-reduction benchmark. Each step runs only for its own flag.
 
 ### Step 6b - Wiki (only if --wiki flag)
 
@@ -44,19 +44,29 @@ graphify export falkordb --push falkordb://localhost:6379
 
 Default URI is `falkordb://localhost:6379` (the scheme is informational - `redis://` or a bare `host:port` work too), auth is optional, and the target graph defaults to `graphify`. Uses MERGE - safe to re-run without creating duplicates.
 
-### Step 7b - SVG export (only if --svg flag)
+### Step 7b - HydraDB export (only if --hydradb-push flag)
+
+**If `--hydradb-push <uri>`** - push directly to a running HydraDB node over Bolt. HydraDB executes a restricted OpenCypher subset, so there is no `cypher.txt` file mode: the exporter translates the graph on the fly (integer ids, batched UNWIND upserts) and `--push` is required. The node's shared auth token is the password; ask the user for it if not provided:
+
+```bash
+HYDRADB_TOKEN=TOKEN graphify export hydradb --push bolt://localhost:7687
+```
+
+Default URI is `bolt://localhost:7687`, any non-empty user works (the token authenticates), and `--database` selects the Bolt database (default `default`). Original node ids are kept as the `uid` property, every node carries the `Entity` label plus its file-type label. Uses MERGE - safe to re-run without creating duplicates.
+
+### Step 7c - SVG export (only if --svg flag)
 
 ```bash
 graphify export svg
 ```
 
-### Step 7c - GraphML export (only if --graphml flag)
+### Step 7d - GraphML export (only if --graphml flag)
 
 ```bash
 graphify export graphml
 ```
 
-### Step 7d - MCP server (only if --mcp flag)
+### Step 7e - MCP server (only if --mcp flag)
 
 ```bash
 $(cat graphify-out/.graphify_python) -m graphify.serve graphify-out/graph.json
