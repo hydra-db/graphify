@@ -7,8 +7,10 @@ hydra-db/hydradb `cypher-compat.md`:
   - vertex upserts are `UNWIND $rows AS row MERGE (n {id: row.vertex})`
     followed by a fixed per-property SET list (no `+=`, no props folded into
     the MERGE pattern),
-  - edge upserts MATCH both endpoints by id and MERGE a directed,
-    single-type relationship carrying `{id: row.relationship_vertex}`,
+  - edge upserts MATCH both endpoints by id with exactly one label each (the
+    label the vertex was created with - the live parser requires this) and
+    MERGE a directed, single-type relationship carrying
+    `{id: row.relationship_vertex}`,
   - node ids are non-negative 63-bit integers, stable across runs,
   - every row in a batch carries exactly the fields the statement reads,
   - property values are limited to int/float/bool/str.
@@ -42,7 +44,8 @@ VERTEX_RE = re.compile(
 )
 EDGE_RE = re.compile(
     r"^UNWIND \$rows AS row "
-    r"MATCH \(s \{id: row\.source_vertex\}\), \(d \{id: row\.destination_vertex\}\) "
+    r"MATCH \(s:[A-Za-z_][A-Za-z0-9_]* \{id: row\.source_vertex\}\), "
+    r"\(d:[A-Za-z_][A-Za-z0-9_]* \{id: row\.destination_vertex\}\) "
     r"MERGE \(s\)-\[r:[A-Z_][A-Z0-9_]* \{id: row\.relationship_vertex\}\]->\(d\) "
     r"SET r\.[A-Za-z_][A-Za-z0-9_]* = row\.[A-Za-z_][A-Za-z0-9_]*"
     r"(, r\.[A-Za-z_][A-Za-z0-9_]* = row\.[A-Za-z_][A-Za-z0-9_]*)*$"
@@ -140,6 +143,23 @@ def test_labels_and_relation_types_are_sanitized():
     # the raw relation text survives as a property value
     edge_rows = [p["rows"][0] for c, p in stmts if EDGE_RE.match(c)]
     assert edge_rows[0]["relation"] == "calls-into thing"
+
+
+def test_edge_batches_group_by_endpoint_labels():
+    """Each edge statement pins one (src label, rel, dst label) combination.
+
+    HydraDB's UNWIND edge batch MATCHes its endpoints with exactly one label
+    each, so edges between differently-labeled nodes cannot share a statement.
+    """
+    stmts = hydradb_statements(_sample_graph(), _communities())
+    edge_stmts = [c for c, _ in stmts if EDGE_RE.match(c)]
+    assert any("(s:Python {id: row.source_vertex}), (d:Python" in c for c in edge_stmts)
+    assert any("(s:Python {id: row.source_vertex}), (d:Markdown" in c for c in edge_stmts)
+    # every vertex statement carries exactly one SET label
+    for c, _ in stmts:
+        if VERTEX_RE.match(c):
+            assert len(re.findall(r"SET n:[A-Za-z_]", c)) == 1
+            assert ", n:" not in c
 
 
 def test_batch_size_chunks_rows():

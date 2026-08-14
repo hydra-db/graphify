@@ -19,11 +19,15 @@ its parser. The constraints that shape this module:
       vertices:  UNWIND $rows AS row MERGE (n {id: row.vertex})
                  SET n:Label, n.key = row.key, ...
       edges:     UNWIND $rows AS row
-                 MATCH (s {id: row.source_vertex}), (d {id: row.destination_vertex})
+                 MATCH (s:SrcLabel {id: row.source_vertex}), (d:DstLabel {id: row.destination_vertex})
                  MERGE (s)-[r:REL {id: row.relationship_vertex}]->(d)
                  SET r.relation = row.relation, ...
   - A vertex upsert must be MERGE-by-id followed by SET; folding other
-    properties into the MERGE pattern is rejected.
+    properties into the MERGE pattern is rejected. The live parser enforces
+    exactly one SET label per vertex upsert, and the edge batch's MATCH
+    endpoints require exactly one label each - the label the vertex was
+    created with - so edge batches are additionally grouped by their
+    endpoint labels.
   - Relationship patterns carry exactly one type and a direction, and only one
     statement is accepted per request.
 
@@ -137,6 +141,7 @@ def hydradb_statements(
 
     # ---- vertices, grouped by (label, property key set) ----
     vertex_groups: dict[tuple[str, tuple[str, ...]], list[dict]] = {}
+    node_labels: dict[str, str] = {}
     for node_id, data in G.nodes(data=True):
         props = _scalar_props(data)
         # The original string id always travels along; `id` is the hash. A
@@ -147,6 +152,7 @@ def hydradb_statements(
         if cid is not None:
             props["community"] = int(cid)
         label = _safe_label(str(data.get("file_type", "Entity")).capitalize())
+        node_labels[str(node_id)] = label
         keyset = tuple(sorted(props))
         row = {"vertex": hydradb_vertex_id(str(node_id))}
         row.update(props)
@@ -164,8 +170,11 @@ def hydradb_statements(
         for chunk in _chunks(rows, batch_size):
             statements.append((cypher, {"rows": chunk}))
 
-    # ---- edges, grouped by (relationship type, property key set) ----
-    edge_groups: dict[tuple[str, tuple[str, ...]], list[dict]] = {}
+    # ---- edges, grouped by (endpoint labels, relationship type, key set) ----
+    # The MATCH endpoints of an UNWIND edge batch require exactly one label
+    # each, and it must be the label the vertex carries, so the endpoint
+    # labels are part of the statement and therefore of the grouping key.
+    edge_groups: dict[tuple[str, str, str, tuple[str, ...]], list[dict]] = {}
     for u, v, data in G.edges(data=True):
         relation = str(data.get("relation", "RELATED_TO"))
         rel = _safe_rel(relation)
@@ -180,15 +189,18 @@ def hydradb_statements(
             "relationship_vertex": _edge_id(str(u), relation, str(v)),
         }
         row.update(props)
-        edge_groups.setdefault((rel, keyset), []).append(row)
+        src_label = node_labels.get(str(u), "Entity")
+        dst_label = node_labels.get(str(v), "Entity")
+        edge_groups.setdefault((src_label, rel, dst_label, keyset), []).append(row)
 
-    for (rel, keyset) in sorted(edge_groups):
-        rows = edge_groups[(rel, keyset)]
+    for (src_label, rel, dst_label, keyset) in sorted(edge_groups):
+        rows = edge_groups[(src_label, rel, dst_label, keyset)]
         rows.sort(key=lambda r: r["relationship_vertex"])
         sets = ", ".join(f"r.{k} = row.{k}" for k in keyset)
         cypher = (
             f"UNWIND $rows AS row "
-            f"MATCH (s {{id: row.source_vertex}}), (d {{id: row.destination_vertex}}) "
+            f"MATCH (s:{src_label} {{id: row.source_vertex}}), "
+            f"(d:{dst_label} {{id: row.destination_vertex}}) "
             f"MERGE (s)-[r:{rel} {{id: row.relationship_vertex}}]->(d) "
             f"SET {sets}"
         )
