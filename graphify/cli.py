@@ -2751,7 +2751,8 @@ def dispatch_command(cmd: str) -> None:
             print("            [--mode fast|thinking] [--max-results N] [--collection C] [--verbose]", file=sys.stderr)
             print("  status    [--database NAME]      infrastructure + indexing status", file=sys.stderr)
             print("  databases                        list databases on the account", file=sys.stderr)
-            print("  feedback  --text \"...\" [--database NAME]   report retrieval quality", file=sys.stderr)
+            print("  feedback  --request-id ID --text \"...\" [--database NAME]", file=sys.stderr)
+            print("            report retrieval quality for a query", file=sys.stderr)
             print(f"  (auth: set {API_KEY_ENV}; database defaults to graphify-<dirname>)", file=sys.stderr)
             sys.exit(1)
 
@@ -2765,6 +2766,7 @@ def dispatch_command(cmd: str) -> None:
         hydra_max: int | None = None
         hydra_verbose = False
         hydra_text: str | None = None
+        hydra_request_id: str | None = None
         positional: list[str] = []
         i = 0
         while i < len(args):
@@ -2785,6 +2787,8 @@ def dispatch_command(cmd: str) -> None:
                 hydra_verbose = True; i += 1
             elif a == "--text" and i + 1 < len(args):
                 hydra_text = args[i + 1]; i += 2
+            elif a == "--request-id" and i + 1 < len(args):
+                hydra_request_id = args[i + 1]; i += 2
             elif not a.startswith("-"):
                 positional.append(a); i += 1
             else:
@@ -2846,11 +2850,12 @@ def dispatch_command(cmd: str) -> None:
                     print(name)
 
             elif subcmd == "feedback":
-                if not hydra_text:
-                    print("error: --text required for feedback", file=sys.stderr)
+                if not hydra_text or not hydra_request_id:
+                    print("error: feedback needs --request-id (printed by "
+                          "`graphify hydradb query`) and --text", file=sys.stderr)
                     sys.exit(1)
                 database = database or default_database_name(Path.cwd())
-                client.feedback(database, feedback=hydra_text)
+                client.feedback(database, hydra_request_id, feedback=hydra_text)
                 print("feedback submitted")
         except HydraDBCloudError as e:
             detail = f" [{e.code}]" if e.code else ""

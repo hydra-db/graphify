@@ -188,9 +188,30 @@ def test_query_body_composition(client, monkeypatch):
     }
 
 
-def test_feedback_requires_text_or_ground_truth(client):
+def test_feedback_requires_request_id_and_content(client, monkeypatch):
     with pytest.raises(HydraDBCloudError):
-        client.feedback("db1")
+        client.feedback("db1", "", feedback="text but no request id")
+    with pytest.raises(HydraDBCloudError):
+        client.feedback("db1", "req-1")  # no text and no ground truth
+    calls: list = []
+    _patch_urlopen(monkeypatch, [
+        _FakeResponse({"success": True, "data": {}}),
+    ], calls)
+    client.feedback("db1", "req-1", feedback="good")
+    sent = json.loads(calls[0].data)
+    assert sent == {"database": "db1", "request_id": "req-1", "feedback": "good"}
+
+
+def test_query_surfaces_request_id_from_meta(client, monkeypatch):
+    _patch_urlopen(monkeypatch, [
+        _FakeResponse({
+            "success": True,
+            "data": {"chunks": []},
+            "meta": {"request_id": "req-42"},
+        }),
+    ], [])
+    data = client.query("db1", "q")
+    assert data["request_id"] == "req-42"
 
 
 def test_missing_api_key_raises(monkeypatch):
@@ -270,14 +291,17 @@ def test_format_query_result_renders_chunks_and_triplets():
             "chunk_relations": [{
                 "triplets": [{
                     "source": {"name": "APIRouter"},
-                    "relation": {"predicate": "uses"},
+                    # the live API names the field canonical_predicate
+                    "relation": {"canonical_predicate": "uses"},
                     "target": {"name": "Dependant"},
                 }],
             }],
         },
+        "request_id": "req-9",
     }
     text = format_query_result(data)
     assert "[1] GRAPH_REPORT.md (score 0.91)" in text
     assert "APIRouter is the hub." in text
     assert "APIRouter --uses--> Dependant" in text
+    assert "request id: req-9" in text
     assert format_query_result({"chunks": []}) == "no results"

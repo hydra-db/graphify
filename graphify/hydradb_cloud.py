@@ -112,6 +112,8 @@ class HydraDBCloudClient:
         self.timeout = timeout
         self.max_retries = max_retries
         self.backoff = backoff
+        # Response meta of the most recent successful call (request_id etc.).
+        self.last_meta: dict = {}
 
     # -- transport -----------------------------------------------------------
 
@@ -198,6 +200,9 @@ class HydraDBCloudClient:
         envelope = json.loads(payload)
         if not envelope.get("success", True):
             raise self._envelope_error(payload, status)
+        # Keep the response meta (request_id, latency) reachable: /feedback
+        # requires the request_id that /query's meta carried.
+        self.last_meta = envelope.get("meta") or {}
         return envelope.get("data") or {}
 
     # -- databases -----------------------------------------------------------
@@ -354,22 +359,36 @@ class HydraDBCloudClient:
             body["additional_context"] = additional_context
         if recency_bias is not None:
             body["recency_bias"] = recency_bias
-        return self._request("POST", "/query", json_body=body)
+        data = self._request("POST", "/query", json_body=body)
+        # Surface the id /feedback needs; the data payload never carries one.
+        data.setdefault("request_id", self.last_meta.get("request_id"))
+        return data
 
     def feedback(
         self,
         database: str,
+        request_id: str,
         feedback: str | None = None,
         ground_truth: dict | None = None,
         rating: str | None = None,
         metadata: dict | None = None,
     ) -> dict:
-        """Report retrieval quality; needs free text or ground truth."""
+        """Report retrieval quality for one query.
+
+        ``request_id`` ties the signal to a specific /query call - it is the
+        ``request_id`` field :meth:`query` returns (from the response meta),
+        and the platform rejects feedback without it. Needs free text or
+        ground truth.
+        """
+        if not request_id:
+            raise HydraDBCloudError(
+                "feedback needs the request_id returned by query()"
+            )
         if not feedback and not ground_truth:
             raise HydraDBCloudError(
                 "feedback needs a free-text comment or ground_truth"
             )
-        body: dict = {"database": database}
+        body: dict = {"database": database, "request_id": request_id}
         if feedback:
             body["feedback"] = feedback
         if ground_truth:
@@ -484,6 +503,15 @@ def format_query_result(data: dict, verbose: bool = False) -> str:
         for t in triplets[:20]:
             src = (t.get("source") or {}).get("name", "?")
             dst = (t.get("target") or {}).get("name", "?")
-            pred = (t.get("relation") or {}).get("predicate", "?")
+            rel = t.get("relation") or {}
+            pred = (
+                rel.get("canonical_predicate")
+                or rel.get("raw_predicate")
+                or rel.get("predicate")
+                or "?"
+            )
             lines.append(f"  {src} --{pred}--> {dst}")
+    if data.get("request_id"):
+        lines.append("")
+        lines.append(f"request id: {data['request_id']} (for feedback)")
     return "\n".join(lines).rstrip()
