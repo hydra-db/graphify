@@ -2424,7 +2424,7 @@ def dispatch_command(cmd: str) -> None:
 
     elif cmd == "export":
         subcmd = sys.argv[2] if len(sys.argv) > 2 else ""
-        if subcmd not in ("html", "callflow-html", "obsidian", "wiki", "svg", "graphml", "neo4j", "falkordb"):
+        if subcmd not in ("html", "callflow-html", "obsidian", "wiki", "svg", "graphml", "neo4j", "falkordb", "hydradb"):
             print("Usage: graphify export <format>", file=sys.stderr)
             print("  html      [--graph PATH] [--labels PATH] [--node-limit N] [--no-viz]", file=sys.stderr)
             print("  callflow-html [GRAPH|DIR] [--graph PATH] [--labels PATH] [--report PATH] [--sections PATH] [--output HTML]", file=sys.stderr)
@@ -2437,6 +2437,8 @@ def dispatch_command(cmd: str) -> None:
             print("            (or set NEO4J_PASSWORD instead of --password to keep it off argv)", file=sys.stderr)
             print("  falkordb  [--graph PATH] [--push URI] [--user U] [--password P]", file=sys.stderr)
             print("            (or set FALKORDB_PASSWORD instead of --password to keep it off argv)", file=sys.stderr)
+            print("  hydradb   [--graph PATH] [--push URI] [--user U] [--password TOKEN]", file=sys.stderr)
+            print("            (--password is the HydraDB auth token; or set HYDRADB_TOKEN)", file=sys.stderr)
             sys.exit(1)
 
         # Parse shared args
@@ -2459,15 +2461,18 @@ def dispatch_command(cmd: str) -> None:
         no_viz = False
         obsidian_dir = Path(_GRAPHIFY_OUT) / "obsidian"
         # Shared push-connection settings for the graph-database sinks (neo4j,
-        # falkordb), parsed from the generic --push/--user/--password flags below.
+        # falkordb, hydradb), parsed from the generic --push/--user/--password
+        # flags below.
         push_uri: str | None = None
-        push_user = "neo4j"  # Neo4j default user; FalkorDB auth is optional and ignores it
+        push_user = "neo4j"  # Neo4j default user; FalkorDB ignores it; HydraDB's Bolt handshake expects "neo4j" too
         # F-031: prefer an env var so the password never appears on argv (visible
         # in `ps` output / shell history). The explicit --password flag still
-        # overrides it. Each sink reads its own var: FALKORDB_PASSWORD for falkordb,
-        # NEO4J_PASSWORD otherwise.
+        # overrides it. Each sink reads its own var: FALKORDB_PASSWORD for
+        # falkordb, HYDRADB_TOKEN for hydradb (its "password" is the node's
+        # bearer auth token), NEO4J_PASSWORD otherwise.
         push_password: str | None = (
             os.environ.get("FALKORDB_PASSWORD") if subcmd == "falkordb"
+            else os.environ.get("HYDRADB_TOKEN") if subcmd == "hydradb"
             else os.environ.get("NEO4J_PASSWORD")
         ) or None
         i = 0
@@ -2728,6 +2733,24 @@ def dispatch_command(cmd: str) -> None:
                       f"FalkorDB's GRAPH.QUERY runs one statement at a time (no bulk script "
                       f"import), so load a graph with: graphify export falkordb --push "
                       f"falkordb://localhost:6379")
+
+        elif subcmd == "hydradb":
+            if push_uri:
+                from graphify.export import push_to_hydradb as _push
+                if push_password is None:
+                    print("error: --password (HydraDB auth token) or HYDRADB_TOKEN required for --push", file=sys.stderr)
+                    sys.exit(1)
+                result = _push(G, uri=push_uri, user=push_user,
+                               password=push_password, communities=communities)
+                print(f"Pushed to HydraDB: {result['nodes']} nodes, {result['edges']} edges")
+            else:
+                from graphify.export import write_hydradb_statements as _write_stmts
+                n = _write_stmts(G, str(out_dir / "hydradb_statements.json"),
+                                 communities=communities)
+                print(f"hydradb_statements.json written ({n} statements). HydraDB accepts "
+                      f"one statement per request and UNWIND batches only over Bolt, so "
+                      f"replay them with a Bolt client - or push directly with: "
+                      f"graphify export hydradb --push bolt://localhost:7687")
 
     elif cmd == "benchmark":
         from graphify.benchmark import run_benchmark, print_benchmark
