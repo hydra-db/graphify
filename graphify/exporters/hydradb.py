@@ -100,10 +100,32 @@ def hydradb_vertex_id(key: str) -> int:
     return int.from_bytes(digest, "big") & 0x7FFF_FFFF_FFFF_FFFF
 
 
-def _edge_id(src_key: str, relation: str, dst_key: str) -> int:
-    payload = f"{src_key}\x00{relation}\x00{dst_key}".encode("utf-8")
+def _edge_id(src_key: str, relation: str, dst_key: str, edge_key) -> int:
+    """Hash the full multigraph identity, including the parallel-edge key.
+
+    graphify builds a MultiDiGraph: two symbols can be connected by more than
+    one edge of the same relation (e.g. `a` calls `b` from two call sites).
+    Hashing only (src, relation, dst) collapsed those onto the same HydraDB
+    relationship id, and a batch that writes the same id twice with different
+    properties is rejected outright ("idempotency key conflict"). `edge_key`
+    is networkx's own per-(src, dst) disambiguator, so folding it in makes
+    every parallel edge distinct without changing the id for a true re-push
+    of the same edge.
+    """
+    payload = f"{src_key}\x00{relation}\x00{dst_key}\x00{edge_key}".encode("utf-8")
     digest = hashlib.blake2b(payload, digest_size=8, person=b"edge").digest()
     return int.from_bytes(digest, "big") & 0x7FFF_FFFF_FFFF_FFFF
+
+
+def _relationship_id(src_key: str, relation: str, dst_key: str, edge_key) -> str:
+    """Human-inspectable identity for the `relationship_id` property.
+
+    HydraDB's own batch examples (cypher-compat.md) carry a `relationship_id`
+    property alongside the opaque `id` used for MERGE - the id is what the
+    pattern matches on, this is what a person or log line can read. Same
+    inputs as `_edge_id`, just not hashed.
+    """
+    return f"{src_key}|{relation}|{dst_key}|{edge_key}"
 
 
 def _scalar_props(data: dict) -> dict:
@@ -175,18 +197,26 @@ def hydradb_statements(
     # each, and it must be the label the vertex carries, so the endpoint
     # labels are part of the statement and therefore of the grouping key.
     edge_groups: dict[tuple[str, str, str, tuple[str, ...]], list[dict]] = {}
-    for u, v, data in G.edges(data=True):
+    # G is a MultiDiGraph - two nodes can carry more than one edge of the same
+    # relation, disambiguated by networkx's own per-(src, dst) edge key. A
+    # plain (non-multi) graph has no such key, so it gets a fixed stand-in.
+    if G.is_multigraph():
+        edge_iter = G.edges(keys=True, data=True)
+    else:
+        edge_iter = ((u, v, 0, data) for u, v, data in G.edges(data=True))
+    for u, v, ekey, data in edge_iter:
         relation = str(data.get("relation", "RELATED_TO"))
         rel = _safe_rel(relation)
         props = _scalar_props(data)
         # Always at least one SET column, and the pre-sanitization relation
         # text is worth keeping anyway.
         props["relation"] = relation
+        props["relationship_id"] = _relationship_id(str(u), relation, str(v), ekey)
         keyset = tuple(sorted(props))
         row = {
             "source_vertex": hydradb_vertex_id(str(u)),
             "destination_vertex": hydradb_vertex_id(str(v)),
-            "relationship_vertex": _edge_id(str(u), relation, str(v)),
+            "relationship_vertex": _edge_id(str(u), relation, str(v), ekey),
         }
         row.update(props)
         src_label = node_labels.get(str(u), "Entity")
