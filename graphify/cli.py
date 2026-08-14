@@ -2424,7 +2424,7 @@ def dispatch_command(cmd: str) -> None:
 
     elif cmd == "export":
         subcmd = sys.argv[2] if len(sys.argv) > 2 else ""
-        if subcmd not in ("html", "callflow-html", "obsidian", "wiki", "svg", "graphml", "neo4j", "falkordb"):
+        if subcmd not in ("html", "callflow-html", "obsidian", "wiki", "svg", "graphml", "neo4j", "falkordb", "hydradb"):
             print("Usage: graphify export <format>", file=sys.stderr)
             print("  html      [--graph PATH] [--labels PATH] [--node-limit N] [--no-viz]", file=sys.stderr)
             print("  callflow-html [GRAPH|DIR] [--graph PATH] [--labels PATH] [--report PATH] [--sections PATH] [--output HTML]", file=sys.stderr)
@@ -2437,6 +2437,8 @@ def dispatch_command(cmd: str) -> None:
             print("            (or set NEO4J_PASSWORD instead of --password to keep it off argv)", file=sys.stderr)
             print("  falkordb  [--graph PATH] [--push URI] [--user U] [--password P]", file=sys.stderr)
             print("            (or set FALKORDB_PASSWORD instead of --password to keep it off argv)", file=sys.stderr)
+            print("  hydradb   [--graph PATH] --push URI [--user U] [--password TOKEN] [--database NAME]", file=sys.stderr)
+            print("            (or set HYDRADB_TOKEN instead of --password to keep it off argv)", file=sys.stderr)
             sys.exit(1)
 
         # Parse shared args
@@ -2465,11 +2467,14 @@ def dispatch_command(cmd: str) -> None:
         # F-031: prefer an env var so the password never appears on argv (visible
         # in `ps` output / shell history). The explicit --password flag still
         # overrides it. Each sink reads its own var: FALKORDB_PASSWORD for falkordb,
-        # NEO4J_PASSWORD otherwise.
+        # HYDRADB_TOKEN for hydradb (its "password" is the node's shared auth
+        # token), NEO4J_PASSWORD otherwise.
         push_password: str | None = (
             os.environ.get("FALKORDB_PASSWORD") if subcmd == "falkordb"
+            else os.environ.get("HYDRADB_TOKEN") if subcmd == "hydradb"
             else os.environ.get("NEO4J_PASSWORD")
         ) or None
+        push_database = "default"  # hydradb only: Bolt database name
         i = 0
         while i < len(args):
             a = args[i]
@@ -2525,6 +2530,8 @@ def dispatch_command(cmd: str) -> None:
                 push_user = args[i + 1]; i += 2
             elif a == "--password" and i + 1 < len(args):
                 push_password = args[i + 1]; i += 2
+            elif a == "--database" and i + 1 < len(args):
+                push_database = args[i + 1]; i += 2
             elif subcmd == "callflow-html" and not a.startswith("-") and not graph_path_explicit:
                 candidate = Path(a)
                 if candidate.name == "graph.json" or candidate.suffix.lower() == ".json":
@@ -2728,6 +2735,26 @@ def dispatch_command(cmd: str) -> None:
                       f"FalkorDB's GRAPH.QUERY runs one statement at a time (no bulk script "
                       f"import), so load a graph with: graphify export falkordb --push "
                       f"falkordb://localhost:6379")
+
+        elif subcmd == "hydradb":
+            # HydraDB accepts a restricted OpenCypher subset (batched UNWIND
+            # upserts over Bolt, integer ids) that a generic cypher.txt script
+            # cannot express, so there is no file fallback: --push is the only
+            # mode, and the exporter translates the graph on the fly.
+            if not push_uri:
+                print("error: hydradb export requires --push bolt://HOST:7687 "
+                      "(HydraDB's OpenCypher subset cannot be loaded from a "
+                      "cypher.txt script)", file=sys.stderr)
+                sys.exit(1)
+            if push_password is None:
+                print("error: --password (or HYDRADB_TOKEN) required for --push - "
+                      "pass the HydraDB node's auth token", file=sys.stderr)
+                sys.exit(1)
+            from graphify.export import push_to_hydradb as _push
+            result = _push(G, uri=push_uri, user=push_user,
+                           password=push_password, communities=communities,
+                           database=push_database)
+            print(f"Pushed to HydraDB: {result['nodes']} nodes, {result['edges']} edges")
 
     elif cmd == "benchmark":
         from graphify.benchmark import run_benchmark, print_benchmark
