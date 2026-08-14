@@ -162,6 +162,28 @@ def test_edge_batches_group_by_endpoint_labels():
             assert ", n:" not in c
 
 
+def test_parallel_multigraph_edges_get_distinct_relationship_ids():
+    """Two same-relation edges between the same nodes (e.g. two call sites)
+    must not collide on the id HydraDB MERGEs by. Hashing only
+    (src, relation, dst) collapsed them onto one relationship id, and a
+    batch that writes that id twice with different properties was rejected
+    by a live node with "idempotency key conflict... the batch carries this
+    relationship id twice with different endpoints or properties".
+    """
+    G = nx.MultiDiGraph()
+    G.add_node("a", file_type="python")
+    G.add_node("b", file_type="python")
+    G.add_edge("a", "b", relation="calls", source_location="L433")
+    G.add_edge("a", "b", relation="calls", source_location="L459")
+    stmts = hydradb_statements(G)
+    edge_rows = [r for _, p in stmts for r in p["rows"] if "relationship_vertex" in r]
+    assert len(edge_rows) == 2
+    assert len({r["relationship_vertex"] for r in edge_rows}) == 2, (
+        "parallel edges collapsed onto the same relationship id"
+    )
+    assert len({r["relationship_id"] for r in edge_rows}) == 2
+
+
 def test_batch_size_chunks_rows():
     G = nx.DiGraph()
     for i in range(7):
