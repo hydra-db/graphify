@@ -2729,6 +2729,134 @@ def dispatch_command(cmd: str) -> None:
                       f"import), so load a graph with: graphify export falkordb --push "
                       f"falkordb://localhost:6379")
 
+    elif cmd == "hydradb":
+        # HydraDB managed platform (api.hydradb.com): sync graph artifacts as
+        # knowledge, then retrieve them (with graph context) from any agent.
+        # The API key rides the HYDRA_DB_API_KEY env var, never argv.
+        from graphify.hydradb_cloud import (
+            API_KEY_ENV,
+            HydraDBCloudClient,
+            HydraDBCloudError,
+            default_database_name,
+            format_query_result,
+            sync_out_dir,
+        )
+
+        subcmd = sys.argv[2] if len(sys.argv) > 2 else ""
+        if subcmd not in ("sync", "query", "status", "databases", "feedback"):
+            print("Usage: graphify hydradb <subcommand>", file=sys.stderr)
+            print("  sync      [DIR] [--database NAME] [--collection C] [--no-wait]", file=sys.stderr)
+            print("            push graphify-out artifacts (report + wiki) as knowledge", file=sys.stderr)
+            print("  query     \"question\" [--database NAME] [--type knowledge|memory|all]", file=sys.stderr)
+            print("            [--mode fast|thinking] [--max-results N] [--collection C] [--verbose]", file=sys.stderr)
+            print("  status    [--database NAME]      infrastructure + indexing status", file=sys.stderr)
+            print("  databases                        list databases on the account", file=sys.stderr)
+            print("  feedback  --text \"...\" [--database NAME]   report retrieval quality", file=sys.stderr)
+            print(f"  (auth: set {API_KEY_ENV}; database defaults to graphify-<dirname>)", file=sys.stderr)
+            sys.exit(1)
+
+        args = sys.argv[3:]
+        database: str | None = None
+        collection: str | None = None
+        hydra_dir = Path.cwd()
+        hydra_wait = True
+        hydra_type = "knowledge"
+        hydra_mode: str | None = None
+        hydra_max: int | None = None
+        hydra_verbose = False
+        hydra_text: str | None = None
+        positional: list[str] = []
+        i = 0
+        while i < len(args):
+            a = args[i]
+            if a == "--database" and i + 1 < len(args):
+                database = args[i + 1]; i += 2
+            elif a == "--collection" and i + 1 < len(args):
+                collection = args[i + 1]; i += 2
+            elif a == "--no-wait":
+                hydra_wait = False; i += 1
+            elif a == "--type" and i + 1 < len(args):
+                hydra_type = args[i + 1]; i += 2
+            elif a == "--mode" and i + 1 < len(args):
+                hydra_mode = args[i + 1]; i += 2
+            elif a == "--max-results" and i + 1 < len(args):
+                hydra_max = int(args[i + 1]); i += 2
+            elif a == "--verbose":
+                hydra_verbose = True; i += 1
+            elif a == "--text" and i + 1 < len(args):
+                hydra_text = args[i + 1]; i += 2
+            elif not a.startswith("-"):
+                positional.append(a); i += 1
+            else:
+                i += 1
+
+        try:
+            client = HydraDBCloudClient()
+        except HydraDBCloudError as e:
+            print(f"error: {e}", file=sys.stderr)
+            sys.exit(1)
+
+        try:
+            if subcmd == "sync":
+                if positional:
+                    hydra_dir = Path(positional[0]).expanduser()
+                out_dir = hydra_dir / _GRAPHIFY_OUT
+                if not out_dir.is_dir():
+                    # Allow pointing straight at an output directory too.
+                    out_dir = hydra_dir
+                database = database or default_database_name(hydra_dir)
+                summary = sync_out_dir(client, out_dir, database,
+                                       collection=collection, wait=hydra_wait)
+                print(f"Synced {len(summary['ids'])} documents to HydraDB "
+                      f"database '{summary['database']}'")
+                for sid, f in zip(summary["ids"], summary["files"]):
+                    print(f"  {sid}  {Path(f).name}")
+                if summary["failed"]:
+                    print(f"warning: {len(summary['failed'])} failed: "
+                          f"{summary['failed']}", file=sys.stderr)
+                    sys.exit(1)
+                print(f"Query it with: graphify hydradb query \"<question>\" "
+                      f"--database {summary['database']}")
+
+            elif subcmd == "query":
+                if not positional:
+                    print("error: question required: graphify hydradb query \"...\"",
+                          file=sys.stderr)
+                    sys.exit(1)
+                database = database or default_database_name(Path.cwd())
+                data = client.query(
+                    database, positional[0], type=hydra_type,
+                    mode=hydra_mode, max_results=hydra_max,
+                    collection=collection,
+                )
+                print(format_query_result(data, verbose=hydra_verbose))
+
+            elif subcmd == "status":
+                database = database or default_database_name(Path.cwd())
+                status = client.database_status(database)
+                infra = status.get("infra") or {}
+                print(f"database: {database}")
+                print(f"  ready_for_ingestion: {infra.get('ready_for_ingestion')}")
+                print(f"  graph_status:        {infra.get('graph_status')}")
+                print(f"  scheduler_status:    {infra.get('scheduler_status')}")
+                print(f"  vectorstore_status:  {infra.get('vectorstore_status')}")
+
+            elif subcmd == "databases":
+                for name in client.list_databases():
+                    print(name)
+
+            elif subcmd == "feedback":
+                if not hydra_text:
+                    print("error: --text required for feedback", file=sys.stderr)
+                    sys.exit(1)
+                database = database or default_database_name(Path.cwd())
+                client.feedback(database, feedback=hydra_text)
+                print("feedback submitted")
+        except HydraDBCloudError as e:
+            detail = f" [{e.code}]" if e.code else ""
+            print(f"error: HydraDB API: {e}{detail}", file=sys.stderr)
+            sys.exit(1)
+
     elif cmd == "benchmark":
         from graphify.benchmark import run_benchmark, print_benchmark
 
