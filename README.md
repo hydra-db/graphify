@@ -253,6 +253,7 @@ Codex users also need `multi_agent = true` under `[features]` in `~/.codex/confi
 | `mcp` | MCP stdio server | `uv tool install "graphifyy[mcp]"` |
 | `neo4j` | Neo4j push support | `uv tool install "graphifyy[neo4j]"` |
 | `falkordb` | FalkorDB push support | `uv tool install "graphifyy[falkordb]"` |
+| `hydradb-sdk` | `graphify hydradb query --llm-context` | `uv tool install "graphifyy[hydradb-sdk]"` |
 | `svg` | SVG graph export | `uv tool install "graphifyy[svg]"` |
 | `leiden` | Leiden community detection (Python < 3.13 only) | `uv tool install "graphifyy[leiden]"` |
 | `ollama` | Ollama local inference | `uv tool install "graphifyy[ollama]"` |
@@ -653,6 +654,7 @@ graphify extract ./raw --code-only # index code only — local AST, no API key (
 /graphify ./raw --falkordb-push falkordb://localhost:6379
 graphify hydradb sync              # push report + wiki to the HydraDB managed platform (HYDRA_DB_API_KEY)
 graphify hydradb query "how does auth work?"   # retrieve ranked chunks + graph context from it
+graphify hydradb query "..." --llm-context     # format with HydraDB's own build_string() (needs the hydradb-sdk extra)
 /graphify ./raw --watch            # auto-sync as files change
 /graphify ./raw --mcp              # start MCP stdio server
 
