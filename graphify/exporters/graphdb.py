@@ -257,6 +257,11 @@ def push_to_hydradb(
     Uses MERGE so re-running is safe - nodes and edges are upserted, not
     duplicated. Returns a dict with counts of nodes and edges pushed.
     """
+    if not password:
+        raise ValueError(
+            "HydraDB requires its auth token as the password "
+            "(the server rejects unauthenticated Bolt sessions)"
+        )
     try:
         from neo4j import GraphDatabase
     except ImportError as e:
@@ -264,11 +269,6 @@ def push_to_hydradb(
             "neo4j driver not installed (HydraDB uses the Bolt protocol). "
             "Run: pip install neo4j"
         ) from e
-    if not password:
-        raise ValueError(
-            "HydraDB requires its auth token as the password "
-            "(the server rejects unauthenticated Bolt sessions)"
-        )
 
     node_community = _node_community_map(communities) if communities else {}
 

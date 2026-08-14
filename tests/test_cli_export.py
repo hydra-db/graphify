@@ -167,6 +167,28 @@ def test_export_falkordb_creates_cypher(tmp_path):
     assert "MERGE" in content or "CREATE" in content
 
 
+# ── graphify export hydradb (push-only) ──────────────────────────────────────
+
+def test_export_hydradb_requires_push(tmp_path):
+    """HydraDB's OpenCypher subset has no cypher.txt fallback: without --push
+    the command must fail with a clear hint instead of writing a file."""
+    _make_graph(tmp_path)
+    r = _run(["export", "hydradb"], tmp_path)
+    assert r.returncode == 1
+    assert "--push" in r.stderr
+    assert not (tmp_path / "graphify-out" / "cypher.txt").exists()
+
+
+def test_export_hydradb_push_requires_token(tmp_path):
+    """--push without a token (flag or HYDRADB_TOKEN) must fail before any
+    connection attempt is made."""
+    _make_graph(tmp_path)
+    env = {k: v for k, v in os.environ.items() if k != "HYDRADB_TOKEN"}
+    r = _run(["export", "hydradb", "--push", "bolt://localhost:7687"], tmp_path, env=env)
+    assert r.returncode == 1
+    assert "HYDRADB_TOKEN" in r.stderr
+
+
 # ── graphify query ───────────────────────────────────────────────────────────
 
 def test_query_returns_output(tmp_path):
