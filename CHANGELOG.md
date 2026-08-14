@@ -4,6 +4,7 @@ Full release notes with details on each version: [GitHub Releases](https://githu
 
 ## 0.9.42 (unreleased)
 
+- New: `graphify export hydradb` pushes the graph to a HydraDB (core) node over Bolt, compiled to HydraDB's OpenCypher subset — stable integer vertex ids, `UNWIND $rows` MERGE-by-id batches grouped by label/relationship/key set, single-label endpoint MATCHes; without `--push` it writes a replayable `hydradb_statements.json`. Auth token via `HYDRADB_TOKEN` or `--password`; install the Bolt driver with the `hydradb` extra.
 - Fix: a JS/TS `for...of` / `for...in` loop binding is now shadowed, so passing it as a call argument no longer fabricates an `indirect_call` edge to an unrelated same-named callable (#2685, thanks @ousamabenyounes); completes the loop/closure/catch shadow family (#2568/#2569/#2517).
 - Fix: graph provenance (`built_at_commit`) is stamped from the analysed repository rather than the shell's working directory, so `graphify extract` run from elsewhere records the target's commit, not the caller's (#2534 family; #2699, thanks @C0KERNEL).
 - Fix: `affected` resolves a seed passed as a `./`-relative path (or an absolute path when run from the repo root) instead of silently returning nothing (#2707, thanks @phudayyy). Note: an absolute-path seed still requires the working directory to be the analysed repo root.
