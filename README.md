@@ -651,6 +651,8 @@ graphify extract ./raw --code-only # index code only — local AST, no API key (
 /graphify ./raw --neo4j-push bolt://localhost:7687
 /graphify ./raw --falkordb         # generate cypher.txt for FalkorDB
 /graphify ./raw --falkordb-push falkordb://localhost:6379
+graphify hydradb sync              # push report + wiki to the HydraDB managed platform (HYDRA_DB_API_KEY)
+graphify hydradb query "how does auth work?"   # retrieve ranked chunks + graph context from it
 /graphify ./raw --watch            # auto-sync as files change
 /graphify ./raw --mcp              # start MCP stdio server
 
