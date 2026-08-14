@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import io
 import json
+import sys
 import urllib.error
 from pathlib import Path
 
@@ -20,11 +21,15 @@ from graphify.hydradb_cloud import (
     HydraDBCloudClient,
     HydraDBCloudError,
     _encode_multipart,
+    build_llm_context,
     collect_sync_files,
     default_database_name,
     format_query_result,
     sync_out_dir,
 )
+
+pytest.importorskip("hydra_db", reason="build_llm_context tests need hydradb-sdk")
+from hydra_db.core.api_error import ApiError  # noqa: E402
 
 
 class _FakeResponse:
@@ -305,3 +310,80 @@ def test_format_query_result_renders_chunks_and_triplets():
     assert "APIRouter --uses--> Dependant" in text
     assert "request id: req-9" in text
     assert format_query_result({"chunks": []}) == "no results"
+
+
+# -- build_llm_context (SDK path) --------------------------------------------
+
+
+def test_build_llm_context_calls_sdk_and_returns_build_string(monkeypatch):
+    calls = {}
+
+    class _FakeMeta:
+        request_id = "req-sdk-1"
+
+    class _FakeEnvelope:
+        meta = _FakeMeta()
+
+    class _FakeClient:
+        def __init__(self, token):
+            calls["token"] = token
+
+        def query(self, **kwargs):
+            calls["kwargs"] = kwargs
+            return _FakeEnvelope()
+
+    monkeypatch.setattr("hydra_db.HydraDB", _FakeClient)
+    monkeypatch.setattr(
+        "hydra_db.helpers.build_string",
+        lambda envelope: f"CONTEXT for {envelope.meta.request_id}",
+    )
+    monkeypatch.setenv("HYDRA_DB_API_KEY", "sk_test")
+
+    context, request_id = build_llm_context(
+        "db1", "how does auth work?", max_results=5, collection="c1"
+    )
+
+    assert context == "CONTEXT for req-sdk-1"
+    assert request_id == "req-sdk-1"
+    assert calls["token"] == "sk_test"
+    assert calls["kwargs"]["database"] == "db1"
+    assert calls["kwargs"]["query"] == "how does auth work?"
+    assert calls["kwargs"]["max_results"] == 5
+    assert calls["kwargs"]["collection"] == "c1"
+    # query_by/graph_context default per HydraDB's hybrid+graph-context guidance
+    assert calls["kwargs"]["query_by"] == "hybrid"
+    assert calls["kwargs"]["graph_context"] is True
+
+
+def test_build_llm_context_wraps_sdk_api_error_cleanly(monkeypatch):
+    class _FakeClient:
+        def __init__(self, token):
+            pass
+
+        def query(self, **kwargs):
+            raise ApiError(
+                status_code=404,
+                body={"error": {"code": "DATABASE_NOT_FOUND", "message": "nope"}},
+            )
+
+    monkeypatch.setattr("hydra_db.HydraDB", _FakeClient)
+    monkeypatch.setenv("HYDRA_DB_API_KEY", "sk_test")
+
+    with pytest.raises(HydraDBCloudError) as exc:
+        build_llm_context("db1", "q")
+    # ApiError.__str__ dumps raw headers/status_code/body; must not leak that.
+    assert str(exc.value) == "nope"
+    assert exc.value.code == "DATABASE_NOT_FOUND"
+    assert exc.value.status == 404
+
+
+def test_build_llm_context_missing_sdk_raises_clean_error(monkeypatch):
+    monkeypatch.setitem(sys.modules, "hydra_db", None)
+    with pytest.raises(HydraDBCloudError, match="hydradb-sdk not installed"):
+        build_llm_context("db1", "q", api_key="sk_test")
+
+
+def test_build_llm_context_missing_api_key_raises(monkeypatch):
+    monkeypatch.delenv("HYDRA_DB_API_KEY", raising=False)
+    with pytest.raises(HydraDBCloudError, match="no API key"):
+        build_llm_context("db1", "q")

@@ -23,6 +23,8 @@ import pytest
 from graphify.hydradb_cloud import (
     API_KEY_ENV,
     HydraDBCloudClient,
+    HydraDBCloudError,
+    build_llm_context,
     format_query_result,
     sync_out_dir,
 )
@@ -85,6 +87,27 @@ def test_query_retrieves_the_synced_document(client, synced):
     assert data.get("request_id")
     # the renderer must handle the live payload end to end
     assert MARKER in format_query_result(data)
+
+
+def test_llm_context_uses_sdk_build_string(synced):
+    pytest.importorskip("hydra_db", reason="needs the hydradb-sdk extra")
+    context, request_id = build_llm_context(
+        DATABASE, f"What is the secret integration marker? {MARKER}",
+        max_results=3,
+    )
+    assert MARKER in context
+    assert request_id
+    # the SDK path's request_id must work with this module's own feedback()
+    result = HydraDBCloudClient().feedback(
+        DATABASE, request_id, feedback="llm-context integration test"
+    )
+    assert result.get("recorded") is True
+
+
+def test_llm_context_wraps_not_found_cleanly():
+    pytest.importorskip("hydra_db", reason="needs the hydradb-sdk extra")
+    with pytest.raises(HydraDBCloudError, match="not found"):
+        build_llm_context("graphify-e2e-no-such-database", "q")
 
 
 def test_feedback_round_trips_with_request_id(client, synced):
